@@ -76,6 +76,9 @@ def _ecies_encrypt(recipient_dh_pub: bytes, plaintext: bytes) -> bytes:
     """
     ECIES encrypt plaintext for recipient.
     Returns: eph_pub (32) || nonce (12) || ciphertext+tag
+
+    AAD = eph_pub binds the ciphertext to the ephemeral key so that
+    swapping eph_pub in the blob is detected by GCM authentication.
     """
     eph_priv_obj = X25519PrivateKey.generate()
     eph_priv     = eph_priv_obj.private_bytes(Encoding.Raw, PrivateFormat.Raw, NoEncryption())
@@ -90,7 +93,7 @@ def _ecies_encrypt(recipient_dh_pub: bytes, plaintext: bytes) -> bytes:
     ).derive(shared)
 
     nonce = os.urandom(12)
-    ct    = AESGCM(enc_key).encrypt(nonce, plaintext, None)
+    ct    = AESGCM(enc_key).encrypt(nonce, plaintext, eph_pub)
     return eph_pub + nonce + ct
 
 
@@ -98,6 +101,9 @@ def _ecies_decrypt(recipient_dh_priv: bytes, blob: bytes) -> bytes:
     """
     ECIES decrypt. blob = eph_pub (32) || nonce (12) || ciphertext+tag
     """
+    if len(blob) < 44 + 16:   # 32 eph_pub + 12 nonce + 16 GCM tag minimum
+        raise ValueError("Sealed blob too short to be a valid ECIES envelope")
+
     eph_pub  = blob[:32]
     nonce    = blob[32:44]
     ct       = blob[44:]
@@ -111,7 +117,7 @@ def _ecies_decrypt(recipient_dh_priv: bytes, blob: bytes) -> bytes:
         info=SEALED_SENDER_INFO,
     ).derive(shared)
 
-    return AESGCM(enc_key).decrypt(nonce, ct, None)
+    return AESGCM(enc_key).decrypt(nonce, ct, eph_pub)
 
 
 # --------------------------------------------------------------------------- #
@@ -201,13 +207,36 @@ def _pack_inner(cert: SenderCertificate, header: Header, ciphertext: bytes) -> b
 
 
 def _unpack_inner(data: bytes) -> tuple[SenderCertificate, Header, bytes]:
+    _MIN_INNER = 4 + 76 + 4 + 40 + 4 + 0   # cert_len_field + min_cert + hdr_len_field + hdr + ct_len_field
+    if len(data) < _MIN_INNER:
+        raise ValueError(f"Inner payload too short: {len(data)} bytes")
+
     offset = 0
+
+    # Sender certificate
+    if offset + 4 > len(data):
+        raise ValueError("Truncated inner payload: missing cert_len")
     cert_len = struct.unpack(">I", data[offset:offset+4])[0]; offset += 4
-    cert     = SenderCertificate.deserialize(data[offset:offset+cert_len]); offset += cert_len
-    hdr_len  = struct.unpack(">I", data[offset:offset+4])[0]; offset += 4
-    hdr      = Header.deserialize(data[offset:offset+hdr_len]); offset += hdr_len
-    ct_len   = struct.unpack(">I", data[offset:offset+4])[0]; offset += 4
-    ct       = data[offset:offset+ct_len]
+    if cert_len > len(data) - offset:
+        raise ValueError(f"cert_len {cert_len} exceeds remaining buffer {len(data) - offset}")
+    cert = SenderCertificate.deserialize(data[offset:offset+cert_len]); offset += cert_len
+
+    # Ratchet header
+    if offset + 4 > len(data):
+        raise ValueError("Truncated inner payload: missing hdr_len")
+    hdr_len = struct.unpack(">I", data[offset:offset+4])[0]; offset += 4
+    if hdr_len > len(data) - offset:
+        raise ValueError(f"hdr_len {hdr_len} exceeds remaining buffer {len(data) - offset}")
+    hdr = Header.deserialize(data[offset:offset+hdr_len]); offset += hdr_len
+
+    # Ciphertext
+    if offset + 4 > len(data):
+        raise ValueError("Truncated inner payload: missing ct_len")
+    ct_len = struct.unpack(">I", data[offset:offset+4])[0]; offset += 4
+    if ct_len > len(data) - offset:
+        raise ValueError(f"ct_len {ct_len} exceeds remaining buffer {len(data) - offset}")
+    ct = data[offset:offset+ct_len]
+
     return cert, hdr, ct
 
 

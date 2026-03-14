@@ -99,6 +99,12 @@ class InitialMessage:
 
     @classmethod
     def deserialize(cls, data: bytes) -> "InitialMessage":
+        # Minimum: ik_pub(32) + ek_pub(32) + spk_id(4) + has_opk(1) + opk_id(4)
+        #        + hdr_len(4) + hdr(≥0) + ct_len(4) + ct(≥0) = 81 bytes
+        _MIN_LEN = 32 + 32 + 4 + 1 + 4 + 4 + 4
+        if len(data) < _MIN_LEN:
+            raise ValueError(f"InitialMessage too short: {len(data)} bytes (need ≥{_MIN_LEN})")
+
         offset = 0
         ik_pub       = data[offset:offset+32];  offset += 32
         ek_pub       = data[offset:offset+32];  offset += 32
@@ -106,10 +112,21 @@ class InitialMessage:
         has_opk      = data[offset:offset+1] == b"\x01";              offset += 1
         opk_id_raw   = struct.unpack(">I", data[offset:offset+4])[0]; offset += 4
         opk_id       = opk_id_raw if has_opk else None
-        hdr_len      = struct.unpack(">I", data[offset:offset+4])[0]; offset += 4
-        header_bytes = data[offset:offset+hdr_len];                    offset += hdr_len
-        ct_len       = struct.unpack(">I", data[offset:offset+4])[0]; offset += 4
-        ciphertext   = data[offset:offset+ct_len]
+
+        if offset + 4 > len(data):
+            raise ValueError("Truncated InitialMessage: missing hdr_len")
+        hdr_len = struct.unpack(">I", data[offset:offset+4])[0]; offset += 4
+        if hdr_len > len(data) - offset:
+            raise ValueError(f"hdr_len {hdr_len} exceeds remaining buffer {len(data) - offset}")
+        header_bytes = data[offset:offset+hdr_len]; offset += hdr_len
+
+        if offset + 4 > len(data):
+            raise ValueError("Truncated InitialMessage: missing ct_len")
+        ct_len = struct.unpack(">I", data[offset:offset+4])[0]; offset += 4
+        if ct_len > len(data) - offset:
+            raise ValueError(f"ct_len {ct_len} exceeds remaining buffer {len(data) - offset}")
+        ciphertext = data[offset:offset+ct_len]
+
         return cls(
             ik_pub=ik_pub,
             ek_pub=ek_pub,
