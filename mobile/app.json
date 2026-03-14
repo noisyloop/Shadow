@@ -1,0 +1,27 @@
+{
+  "expo": {
+    "name": "Shadow",
+    "slug": "shadow",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "dark",
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.shadow.app",
+      "infoPlist": {
+        "NSCameraUsageDescription": "Camera is used to scan contact QR codes."
+      }
+    },
+    "android": {
+      "package": "com.shadow.app",
+      "permissions": ["CAMERA", "USE_BIOMETRIC"]
+    },
+    "plugins": [
+      "expo-router",
+      ["expo-camera", { "cameraPermission": "Allow Shadow to access your camera to scan contact QR codes." }],
+      "expo-secure-store"
+    ],
+    "scheme": "shadow",
+    "experiments": { "typedRoutes": true }
+  }
+}
