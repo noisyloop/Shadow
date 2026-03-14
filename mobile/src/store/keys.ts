@@ -158,15 +158,29 @@ export const useKeysStore = create<KeyState>((set, get) => ({
 
   /**
    * Remove a one-time prekey that has been used (to prevent reuse).
+   * Automatically triggers replenishment when the pool drops below 5 keys.
    */
   consumeOpk: async (id: number) => {
     const next = get().opks.filter((k) => k.id !== id);
     set({ opks: next });
     await SecureStore.setItemAsync(KEY_OPKS, JSON.stringify(next));
+
+    // Auto-replenish when the pool falls below the low-water mark
+    if (next.length < 5) {
+      await get().replenishOpks(DEFAULT_OPK_BATCH);
+    }
   },
 
   /**
    * Generate `count` new OPKs and append them to the existing set.
+   *
+   * Steps:
+   *   1. Generates `count` new OPKs using generateOneTimePreKey().
+   *   2. Assigns sequential IDs starting from max(existing IDs) + 1.
+   *   3. Persists the updated pool to SecureStore.
+   *
+   * TODO: In a real deployment this should also publish the new OPK public
+   *       keys to the prekey server so other users can initiate X3DH sessions.
    */
   replenishOpks: async (count: number = DEFAULT_OPK_BATCH) => {
     const existing = get().opks;
