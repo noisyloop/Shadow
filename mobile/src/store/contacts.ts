@@ -25,17 +25,20 @@ export interface Contact {
   ikDhPub:  string;
   /** Unix timestamp (ms) when contact was added */
   addedAt:  number;
+  /** Whether the contact's key has been verified out-of-band (default false) */
+  verified: boolean;
 }
 
-/** Parameter type for addContact — id and addedAt are derived automatically */
-export type NewContact = Omit<Contact, 'id' | 'addedAt'>;
+/** Parameter type for addContact — id, addedAt, and verified are derived automatically */
+export type NewContact = Omit<Contact, 'id' | 'addedAt' | 'verified'>;
 
 interface ContactState {
-  contacts:      Contact[];
-  loaded:        boolean;
-  addContact:    (c: NewContact) => Promise<void>;
-  removeContact: (id: string)    => Promise<void>;
-  loadContacts:  ()              => Promise<void>;
+  contacts:       Contact[];
+  loaded:         boolean;
+  addContact:     (c: NewContact) => Promise<void>;
+  removeContact:  (id: string)    => Promise<void>;
+  loadContacts:   ()              => Promise<void>;
+  verifyContact:  (id: string, verified?: boolean) => Promise<void>;
 }
 
 // ─── Storage key ──────────────────────────────────────────────────────────────
@@ -87,6 +90,7 @@ export const useContactStore = create<ContactState>((set, get) => ({
       name:     c.name,
       ikDhPub:  id,
       addedAt:  existing?.addedAt ?? Date.now(),
+      verified: existing?.verified ?? false,
     };
     const next = [
       ...get().contacts.filter((x) => x.id !== id),
@@ -102,6 +106,18 @@ export const useContactStore = create<ContactState>((set, get) => ({
    */
   removeContact: async (id: string) => {
     const next = get().contacts.filter((c) => c.id !== id);
+    set({ contacts: next });
+    await persist(next);
+  },
+
+  /**
+   * Set a contact's verified flag. Pass true to mark verified, false to clear.
+   * Persists the change to SecureStore.
+   */
+  verifyContact: async (id: string, verified = true) => {
+    const next = get().contacts.map((c) =>
+      c.id === id ? { ...c, verified } : c,
+    );
     set({ contacts: next });
     await persist(next);
   },

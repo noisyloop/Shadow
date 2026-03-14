@@ -49,6 +49,9 @@ enum Commands {
         /// Send a single message non-interactively and exit
         #[arg(short, long)]
         message: Option<String>,
+        /// Nostr relay URL to publish through (default: wss://relay.damus.io)
+        #[arg(long)]
+        relay: Option<String>,
     },
 
     /// Poll for new incoming messages from a Nostr relay
@@ -56,6 +59,9 @@ enum Commands {
         /// Override default relay URL
         #[arg(long)]
         relay: Option<String>,
+        /// Seconds to wait for messages before exiting (default: 10)
+        #[arg(long, default_value_t = 10)]
+        timeout: u64,
     },
 
     /// Key management subcommands
@@ -90,12 +96,12 @@ async fn main() -> Result<()> {
             commands::add::run(&name, &pubkey, nostr.as_deref())?;
         }
 
-        Commands::Send { contact, message } => {
-            commands::send::run(&contact, message.as_deref()).await?;
+        Commands::Send { contact, message, relay } => {
+            commands::send::run(&contact, message.as_deref(), relay.as_deref()).await?;
         }
 
-        Commands::Recv { relay } => {
-            commands::recv::run(relay.as_deref()).await?;
+        Commands::Recv { relay, timeout } => {
+            commands::recv::run(relay.as_deref(), timeout).await?;
         }
 
         Commands::Key { action } => match action {

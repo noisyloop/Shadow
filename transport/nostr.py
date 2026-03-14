@@ -42,6 +42,13 @@ from websockets.exceptions import ConnectionClosed
 
 
 # --------------------------------------------------------------------------- #
+# Constants
+# --------------------------------------------------------------------------- #
+
+DEFAULT_RELAY = "wss://relay.damus.io"
+
+
+# --------------------------------------------------------------------------- #
 # BIP340 Schnorr on secp256k1 (pure Python)
 # Reference: https://github.com/bitcoin/bips/blob/master/bip-0340.mediawiki
 # --------------------------------------------------------------------------- #
@@ -313,6 +320,30 @@ class NostrRelay:
         self._sub_handlers.pop(sub_id, None)
         msg = json.dumps(["CLOSE", sub_id])
         await self._ws.send(msg)
+
+    async def subscribe_kind14(
+        self,
+        recipient_pub: bytes,
+        handler: Callable[["NostrEvent"], Awaitable[None]],
+        sub_id: Optional[str] = None,
+    ) -> str:
+        """
+        Subscribe to kind-14 (sealed DM) events tagged to a given recipient pubkey.
+
+        recipient_pub — 32-byte x-only secp256k1 public key of the recipient.
+        handler       — async callable invoked for each matching event.
+        sub_id        — optional subscription ID; generated if not provided.
+
+        Returns the subscription ID so the caller can unsubscribe later.
+        """
+        if sub_id is None:
+            sub_id = "shadow-" + os.urandom(8).hex()
+        filters = {
+            "kinds": [SHADOW_KIND],
+            "#p":    [recipient_pub.hex()],
+        }
+        await self.subscribe(sub_id, filters, handler)
+        return sub_id
 
     async def _recv_loop(self) -> None:
         """Background task: dispatch incoming relay messages."""

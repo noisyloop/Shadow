@@ -80,9 +80,19 @@ export default function HomeScreen(): React.JSX.Element {
           </Text>
         </View>
         <View style={styles.contactInfo}>
-          <Text style={styles.contactName} numberOfLines={1}>
-            {item.name}
-          </Text>
+          <View style={styles.nameRow}>
+            <Text style={styles.contactName} numberOfLines={1}>
+              {item.name}
+            </Text>
+            {item.verified && (
+              <Text
+                style={styles.verifiedBadge}
+                accessibilityLabel="Verified"
+              >
+                ✓
+              </Text>
+            )}
+          </View>
           <Text style={styles.contactKey} numberOfLines={1}>
             {item.ikDhPub.slice(0, 16)}…
           </Text>
@@ -217,10 +227,21 @@ const styles = StyleSheet.create({
     flex: 1,
     minWidth: 0,
   },
+  nameRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
   contactName: {
     color: '#f0f0f0',
     fontSize: 16,
     fontWeight: '500',
+    flexShrink: 1,
+  },
+  verifiedBadge: {
+    color: '#00c853',
+    fontSize: 10,
+    fontWeight: '700',
   },
   contactKey: {
     color: '#555',

@@ -51,13 +51,14 @@ class OneTimePreKey:
 @dataclass
 class PreKeyBundle:
     """Bob's public key bundle published to the prekey server."""
-    identity_key:      bytes          # IK DH public (X25519, 32 bytes)
-    identity_sign_key: bytes          # IK signing public (ed25519, 32 bytes)
-    spk_id:            int
-    spk_public:        bytes          # SPK public (X25519, 32 bytes)
-    spk_signature:     bytes          # ed25519 sig of spk_public by IK signing key
-    opk_id:            Optional[int]  # OPK id, or None
-    opk_public:        Optional[bytes]  # OPK public (X25519, 32 bytes), or None
+    identity_key:        bytes          # IK DH public (X25519, 32 bytes)
+    identity_sign_key:   bytes          # IK signing public (ed25519, 32 bytes)
+    spk_id:              int
+    spk_public:          bytes          # SPK public (X25519, 32 bytes)
+    spk_signature:       bytes          # ed25519 sig of spk_public by IK signing key
+    opk_id:              Optional[int]  # OPK id, or None
+    opk_public:          Optional[bytes]  # OPK public (X25519, 32 bytes), or None
+    needs_replenishment: bool = False   # True when pool drops below OPK_LOW_WATER_MARK
 
     def to_json(self) -> str:
         d = {
@@ -158,6 +159,31 @@ class DeviceIdentity:
 
 
 # --------------------------------------------------------------------------- #
+# OPK batch generation helper
+# --------------------------------------------------------------------------- #
+
+def generate_opk_batch(
+    identity: DeviceIdentity,
+    count: int = 10,
+    existing_opks: Optional[list[OneTimePreKey]] = None,
+) -> list[OneTimePreKey]:
+    """
+    Generate a batch of fresh OPKs for replenishment.
+
+    IDs are assigned sequentially starting after the highest ID already present
+    in ``existing_opks`` (or from 0 if none are provided).
+
+    The caller is responsible for publishing the returned OPKs to the prekey
+    server via ``PrekeyServer.replenish_opks()``.
+    """
+    if existing_opks:
+        start_id = max(opk.id for opk in existing_opks) + 1
+    else:
+        start_id = 0
+    return identity.generate_opks(count, start_id=start_id)
+
+
+# --------------------------------------------------------------------------- #
 # Prekey server stub
 # --------------------------------------------------------------------------- #
 
@@ -166,6 +192,9 @@ class PrekeyServer:
     In-memory prekey server stub.
     In production this would be an HTTP API backed by a database.
     """
+
+    OPK_LOW_WATER_MARK  = 5   # replenishment needed when pool falls below this
+    OPK_REPLENISH_BATCH = 10  # default batch size for replenishment
 
     def __init__(self):
         # identity_key_hex -> PreKeyBundle
@@ -209,6 +238,8 @@ class PrekeyServer:
         """
         Fetch the bundle for a recipient.
         Pops one OPK from the pool if available and attaches it to the bundle.
+        Sets needs_replenishment=True when the remaining pool size drops below
+        OPK_LOW_WATER_MARK.
         """
         key = identity_key.hex()
         bundle = self._bundles.get(key)
@@ -218,6 +249,7 @@ class PrekeyServer:
         pool = self._opk_pool.get(key, [])
         if pool:
             opk_id, opk_pub = pool.pop(0)
+            needs_replenishment = len(pool) < self.OPK_LOW_WATER_MARK
             bundle = PreKeyBundle(
                 identity_key=bundle.identity_key,
                 identity_sign_key=bundle.identity_sign_key,
@@ -226,6 +258,7 @@ class PrekeyServer:
                 spk_signature=bundle.spk_signature,
                 opk_id=opk_id,
                 opk_public=opk_pub,
+                needs_replenishment=needs_replenishment,
             )
         else:
             # Graceful degradation: no OPK available
@@ -237,11 +270,22 @@ class PrekeyServer:
                 spk_signature=bundle.spk_signature,
                 opk_id=None,
                 opk_public=None,
+                needs_replenishment=True,
             )
         return bundle
 
-    def opk_count(self, identity_key: bytes) -> int:
-        return len(self._opk_pool.get(identity_key.hex(), []))
+    def opk_count(self, ik_pub_hex: str) -> int:
+        """Return current OPK pool size for an identity key (hex string)."""
+        return len(self._opk_pool.get(ik_pub_hex, []))
+
+    def replenish_opks(
+        self,
+        ik_pub_hex: str,
+        new_opks: list[tuple[int, bytes]],
+    ) -> None:
+        """Append new OPKs to the pool for a given identity key (hex string)."""
+        pool = self._opk_pool.setdefault(ik_pub_hex, [])
+        pool.extend(new_opks)
 
 
 # --------------------------------------------------------------------------- #

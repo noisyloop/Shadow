@@ -33,19 +33,23 @@ import {
   Platform,
   ActivityIndicator,
 } from 'react-native';
-import { useRoute } from '@react-navigation/native';
+import { useRoute, useNavigation } from '@react-navigation/native';
 import type { RouteProp } from '@react-navigation/native';
+import type { StackNavigationProp } from '@react-navigation/stack';
+import { Ionicons } from '@expo/vector-icons';
 
 import type { RootStackParamList } from '@/navigation';
 import { useMessageStore, type Message } from '@/store/messages';
 import { useKeyStore } from '@/store/keys';
+import { useContactStore } from '@/store/contacts';
 import { ratchetEncrypt, toHex as ratchetToHex } from '@/crypto/ratchet';
 import { fromHex } from '@/crypto/identity';
 import MessageBubble from '@/components/MessageBubble';
 
-// ─── Route param type ─────────────────────────────────────────────────────────
+// ─── Route / nav param types ──────────────────────────────────────────────────
 
 type ChatRoute = RouteProp<RootStackParamList, 'Chat'>;
+type ChatNav   = StackNavigationProp<RootStackParamList, 'Chat'>;
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -75,7 +79,8 @@ function makeMessageId(): string {
 // ─── Component ────────────────────────────────────────────────────────────────
 
 const ChatScreen: FC = () => {
-  const route = useRoute<ChatRoute>();
+  const route      = useRoute<ChatRoute>();
+  const navigation = useNavigation<ChatNav>();
   const { contactId, contactName } = route.params;
 
   const flatRef  = useRef<FlatList<Message>>(null);
@@ -83,12 +88,38 @@ const ChatScreen: FC = () => {
   const [sending, setSending] = useState(false);
 
   // Store selectors
-  const messages    = useMessageStore((s) => s.getMessages(contactId));
+  const messages     = useMessageStore((s) => s.getMessages(contactId));
   const loadMessages = useMessageStore((s) => s.loadMessages);
-  const addMessage  = useMessageStore((s) => s.addMessage);
-  const identity    = useKeyStore((s) => s.identity);
-  const getSession  = useKeyStore((s) => s.getSession);
-  const saveSession = useKeyStore((s) => s.saveSession);
+  const addMessage   = useMessageStore((s) => s.addMessage);
+  const identity     = useKeyStore((s) => s.identity);
+  const getSession   = useKeyStore((s) => s.getSession);
+  const saveSession  = useKeyStore((s) => s.saveSession);
+  const contacts     = useContactStore((s) => s.contacts);
+
+  const isVerified = contacts.find((c) => c.id === contactId)?.verified ?? false;
+
+  // ── Shield header button ───────────────────────────────────────────────────
+
+  useEffect(() => {
+    navigation.setOptions({
+      headerRight: () => (
+        <TouchableOpacity
+          onPress={() => navigation.navigate('Verify', { contactId, contactName })}
+          style={chatHeaderStyles.headerBtn}
+          accessibilityLabel={
+            isVerified ? 'Key verified — tap to review' : 'Verify contact key'
+          }
+          accessibilityRole="button"
+        >
+          <Ionicons
+            name="shield-checkmark-outline"
+            size={22}
+            color={isVerified ? '#00e5ff' : '#555'}
+          />
+        </TouchableOpacity>
+      ),
+    });
+  }, [navigation, contactId, contactName, isVerified]);
 
   // ── Hydrate messages on mount ──────────────────────────────────────────────
 
@@ -248,6 +279,15 @@ const ChatScreen: FC = () => {
 };
 
 export default ChatScreen;
+
+// ─── Header styles (defined outside component to avoid recreation) ────────────
+
+const chatHeaderStyles = StyleSheet.create({
+  headerBtn: {
+    marginRight: 16,
+    padding: 4,
+  },
+});
 
 // ─── Styles ───────────────────────────────────────────────────────────────────
 

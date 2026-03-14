@@ -14,7 +14,7 @@ import copy
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from core.identity import DeviceIdentity, PrekeyServer
+from core.identity import DeviceIdentity, PrekeyServer, generate_opk_batch
 from core.x3dh import x3dh_send, x3dh_receive
 from core.ratchet import ratchet_encrypt, ratchet_decrypt
 
@@ -163,6 +163,47 @@ def test_bad_spk_signature_rejected():
 
 
 # --------------------------------------------------------------------------- #
+# Test 5 — OPK replenishment
+# --------------------------------------------------------------------------- #
+
+def test_opk_replenishment():
+    """
+    Server signals needs_replenishment when pool drops below the low-water mark.
+    replenish_opks() refills the pool and subsequent fetches succeed with an OPK.
+    """
+    bob, spk, opks, server = setup_bob(opk_count=3)
+    ik_hex = bob.ik_dh_pub.hex()
+
+    # Fetch 1 — 2 OPKs remain after pop; 2 < OPK_LOW_WATER_MARK(5) → True
+    b1 = server.fetch(bob.ik_dh_pub)
+    assert b1 is not None and b1.opk_id is not None
+    assert b1.needs_replenishment is True  # 2 remaining < 5
+
+    # Fetch 2 — 1 OPK remains
+    b2 = server.fetch(bob.ik_dh_pub)
+    assert b2 is not None and b2.opk_id is not None
+    assert b2.needs_replenishment is True  # 1 remaining < 5
+
+    # Fetch 3 — pool is now empty → needs_replenishment must be True
+    b3 = server.fetch(bob.ik_dh_pub)
+    assert b3 is not None and b3.opk_id is not None
+    assert b3.needs_replenishment is True  # 0 remaining < 5
+
+    # Replenish with 5 new OPKs
+    new_opks = generate_opk_batch(bob, count=5, existing_opks=opks)
+    server.replenish_opks(ik_hex, [(o.id, o.pub) for o in new_opks])
+
+    # Pool should now contain 5 OPKs
+    assert server.opk_count(ik_hex) == 5
+
+    # Fetch again — should succeed and return an OPK
+    b4 = server.fetch(bob.ik_dh_pub)
+    assert b4 is not None
+    assert b4.opk_id is not None
+    assert b4.opk_public is not None
+
+
+# --------------------------------------------------------------------------- #
 # Runner
 # --------------------------------------------------------------------------- #
 
@@ -171,6 +212,7 @@ TESTS = [
     ("OPK consumed and not reused",                test_opk_consumed),
     ("Graceful degradation without OPK",           test_no_opk_graceful_degradation),
     ("Bad SPK signature rejected",                 test_bad_spk_signature_rejected),
+    ("OPK replenishment",                          test_opk_replenishment),
 ]
 
 if __name__ == "__main__":
