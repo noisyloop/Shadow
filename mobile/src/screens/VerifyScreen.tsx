@@ -7,8 +7,8 @@
  * Route params: { contactId: string, contactName: string }
  *
  * Actions:
- *   Mark as Verified     — calls verifyContact() and goes back (unverified state)
- *   Remove Verification  — resets verified=false and persists (verified state)
+ *   Mark as Verified    — sets verified=true, persists, navigates back
+ *   Remove Verification — sets verified=false, persists, navigates back
  */
 
 import React, { memo, useCallback, useEffect } from 'react';
@@ -34,68 +34,48 @@ import QRDisplay from '@/components/QRDisplay';
 type VerifyRoute = RouteProp<RootStackParamList, 'Verify'>;
 type VerifyNav   = StackNavigationProp<RootStackParamList, 'Verify'>;
 
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+/** Shortened hex: first 16 chars + ellipsis + last 8 chars */
+function shortHex(hex: string): string {
+  return `${hex.slice(0, 16)}…${hex.slice(-8)}`;
+}
+
+/** Format hex as space-separated 8-char groups for readability */
+function formatHex(hex: string): string {
+  return (hex.match(/.{1,8}/g) ?? []).join(' ');
+}
+
 // ─── Component ────────────────────────────────────────────────────────────────
 
 const VerifyScreen: React.FC = memo(() => {
-  const navigation      = useNavigation<VerifyNav>();
-  const route           = useRoute<VerifyRoute>();
+  const navigation    = useNavigation<VerifyNav>();
+  const route         = useRoute<VerifyRoute>();
   const { contactId, contactName } = route.params;
 
-  const identity        = useKeysStore((s) => s.identity);
-  const contacts        = useContactStore((s) => s.contacts);
-  const verifyContact   = useContactStore((s) => s.verifyContact);
-  // Use addContact to update the verified field back to false
-  const addContact      = useContactStore((s) => s.addContact);
+  const identity      = useKeysStore((s) => s.identity);
+  const contacts      = useContactStore((s) => s.contacts);
+  const verifyContact = useContactStore((s) => s.verifyContact);
 
-  const contact = contacts.find((c) => c.id === contactId);
+  const contact    = contacts.find((c) => c.id === contactId);
   const isVerified = contact?.verified ?? false;
 
-  // Set header title
+  // Update header title with contact name
   useEffect(() => {
     navigation.setOptions({ title: `Verify ${contactName}` });
   }, [navigation, contactName]);
 
-  const handleVerify = useCallback(async () => {
-    await verifyContact(contactId);
+  const handleMarkVerified = useCallback(async () => {
+    await verifyContact(contactId, true);
     navigation.goBack();
   }, [verifyContact, contactId, navigation]);
 
   const handleRemoveVerification = useCallback(async () => {
-    if (!contact) return;
-    await addContact({
-      name:    contact.name,
-      ikDhPub: contact.ikDhPub,
-    });
-    // addContact preserves existing fields but resets verified to false
-    // We need to explicitly set verified=false via a direct store update.
-    // Since addContact defaults verified to existing?.verified, we patch:
-    const contacts2 = useContactStore.getState().contacts;
-    const patched = contacts2.map((c) =>
-      c.id === contactId ? { ...c, verified: false } : c,
-    );
-    useContactStore.setState({ contacts: patched });
-    // Persist
-    const { SecureStore } = await import('expo-secure-store');
-    // We can't import SecureStore dynamically this way; use the store's
-    // removeContact + addContact pattern is cleaner:
-    // Re-add with verified explicitly cleared through the store internals.
-    // Simplest: persist via removeContact + addContact.
-    // But that loses addedAt. Let's call the persist helper inline.
-    // Instead, the cleanest approach: expose this via a dedicated action,
-    // but since we only have verifyContact (sets true), we mirror the logic
-    // directly via getState mutation + re-persist through SecureStore.
-    //
-    // In practice: just call the internal persist. Since we can't access it
-    // from outside without exporting, we use a workaround: set state then
-    // call removeContact+addContact won't preserve addedAt properly.
-    //
-    // Best solution that fits the existing API: update the store state
-    // directly and re-persist using the same mechanism as verifyContact,
-    // but inversely. We do this inline here:
+    await verifyContact(contactId, false);
     navigation.goBack();
-  }, [contact, contactId, addContact, navigation]);
+  }, [verifyContact, contactId, navigation]);
 
-  // ── Loading state ──────────────────────────────────────────────────────────
+  // ── Loading / error states ─────────────────────────────────────────────────
 
   if (!identity) {
     return (
@@ -114,14 +94,12 @@ const VerifyScreen: React.FC = memo(() => {
     );
   }
 
-  const myKey      = identity.ikDhPub;
-  const theirKey   = contact.ikDhPub;
-  const myQrValue  = `shadow://key/${myKey}`;
+  const myKey        = identity.ikDhPub;
+  const theirKey     = contact.ikDhPub;
+  const myQrValue    = `shadow://key/${myKey}`;
   const theirQrValue = `shadow://key/${theirKey}`;
 
-  // Short hex labels (first 16 + ellipsis + last 8)
-  const shortHex = (hex: string) =>
-    `${hex.slice(0, 16)}…${hex.slice(-8)}`;
+  // ── Render ─────────────────────────────────────────────────────────────────
 
   return (
     <ScrollView
@@ -129,7 +107,7 @@ const VerifyScreen: React.FC = memo(() => {
       contentContainerStyle={styles.content}
       showsVerticalScrollIndicator={false}
     >
-      {/* Verified / Unverified badge */}
+      {/* Status badge */}
       {isVerified ? (
         <View style={styles.verifiedBadge}>
           <Text style={styles.verifiedBadgeText}>✓ Verified</Text>
@@ -140,7 +118,7 @@ const VerifyScreen: React.FC = memo(() => {
         </View>
       )}
 
-      {/* Warning / instruction */}
+      {/* Instruction / warning */}
       <View style={styles.warningBox}>
         <Text style={styles.warningText}>
           Compare these keys with your contact via a voice call or in person.
@@ -149,9 +127,8 @@ const VerifyScreen: React.FC = memo(() => {
         </Text>
       </View>
 
-      {/* Keys side-by-side */}
+      {/* QR codes side-by-side */}
       <View style={styles.keysRow}>
-        {/* My key */}
         <View style={styles.keyCard}>
           <Text style={styles.keyCardTitle}>You</Text>
           <QRDisplay value={myQrValue} size={160} ecl="M" />
@@ -160,9 +137,10 @@ const VerifyScreen: React.FC = memo(() => {
           </Text>
         </View>
 
-        {/* Their key */}
         <View style={styles.keyCard}>
-          <Text style={styles.keyCardTitle}>{contactName}</Text>
+          <Text style={styles.keyCardTitle} numberOfLines={1}>
+            {contactName}
+          </Text>
           <QRDisplay value={theirQrValue} size={160} ecl="M" />
           <Text style={styles.keyHexLabel} selectable numberOfLines={2}>
             {shortHex(theirKey)}
@@ -170,18 +148,18 @@ const VerifyScreen: React.FC = memo(() => {
         </View>
       </View>
 
-      {/* Full hex blocks */}
+      {/* Full hex for manual comparison */}
       <View style={styles.hexBlock}>
         <Text style={styles.hexBlockLabel}>Your IK DH Public Key</Text>
         <Text style={styles.hexBlockValue} selectable>
-          {(myKey.match(/.{1,8}/g) ?? []).join(' ')}
+          {formatHex(myKey)}
         </Text>
       </View>
 
       <View style={styles.hexBlock}>
         <Text style={styles.hexBlockLabel}>{contactName}'s IK DH Public Key</Text>
         <Text style={styles.hexBlockValue} selectable>
-          {(theirKey.match(/.{1,8}/g) ?? []).join(' ')}
+          {formatHex(theirKey)}
         </Text>
       </View>
 
@@ -190,7 +168,7 @@ const VerifyScreen: React.FC = memo(() => {
         <TouchableOpacity
           style={styles.btnRemove}
           onPress={handleRemoveVerification}
-          accessibilityLabel="Remove verification"
+          accessibilityLabel="Remove key verification for this contact"
           accessibilityRole="button"
         >
           <Text style={styles.btnRemoveText}>Remove Verification</Text>
@@ -198,8 +176,8 @@ const VerifyScreen: React.FC = memo(() => {
       ) : (
         <TouchableOpacity
           style={styles.btnVerify}
-          onPress={handleVerify}
-          accessibilityLabel="Mark contact as verified"
+          onPress={handleMarkVerified}
+          accessibilityLabel="Mark this contact's key as verified"
           accessibilityRole="button"
         >
           <Text style={styles.btnVerifyText}>Mark as Verified</Text>
@@ -241,7 +219,7 @@ const styles = StyleSheet.create({
     color: '#555',
     fontSize: 14,
   },
-  // Badges
+  // Status badges
   verifiedBadge: {
     backgroundColor: '#0d2e1a',
     borderColor: '#00c853',
@@ -268,7 +246,7 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '600',
   },
-  // Warning box
+  // Warning / instruction box
   warningBox: {
     backgroundColor: '#141414',
     borderLeftWidth: 3,
@@ -282,7 +260,7 @@ const styles = StyleSheet.create({
     fontSize: 13,
     lineHeight: 20,
   },
-  // Keys row
+  // QR cards row
   keysRow: {
     flexDirection: 'row',
     gap: 12,
@@ -292,7 +270,7 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#111111',
     borderRadius: 14,
-    padding: 14,
+    padding: 12,
     alignItems: 'center',
     gap: 10,
   },
@@ -306,7 +284,7 @@ const styles = StyleSheet.create({
     fontFamily: 'monospace',
     fontSize: 10,
     textAlign: 'center',
-    lineHeight: 16,
+    lineHeight: 15,
   },
   // Full hex blocks
   hexBlock: {
@@ -334,7 +312,6 @@ const styles = StyleSheet.create({
     backgroundColor: '#00e5ff',
     borderRadius: 12,
     paddingVertical: 15,
-    paddingHorizontal: 32,
     width: '100%',
     alignItems: 'center',
   },
@@ -349,7 +326,6 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderRadius: 12,
     paddingVertical: 15,
-    paddingHorizontal: 32,
     width: '100%',
     alignItems: 'center',
   },

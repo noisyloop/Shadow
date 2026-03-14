@@ -21,6 +21,7 @@ import HomeScreen from '@/screens/HomeScreen';
 import ChatScreen from '@/screens/ChatScreen';
 import AddContactScreen from '@/screens/AddContactScreen';
 import KeyScreen from '@/screens/KeyScreen';
+import VerifyScreen from '@/screens/VerifyScreen';
 
 // ─── Route param types ────────────────────────────────────────────────────────
 
@@ -31,6 +32,7 @@ export type RootStackParamList = {
   /** Aliased as both 'Key' (legacy) and 'KeyDisplay' */
   Key: undefined;
   KeyDisplay: undefined;
+  Verify: { contactId: string; contactName: string };
 };
 
 // ─── Theme ────────────────────────────────────────────────────────────────────
@@ -117,6 +119,16 @@ export default function Navigation(): React.JSX.Element {
           name="KeyDisplay"
           component={KeyScreen}
           options={{ title: 'My Identity Key', presentation: 'modal' }}
+        />
+
+        {/* ── Verify ── */}
+        <Stack.Screen
+          name="Verify"
+          component={VerifyScreen}
+          options={({ route }) => ({
+            title: `Verify ${route.params.contactName}`,
+            headerBackTitleVisible: false,
+          })}
         />
       </Stack.Navigator>
     </NavigationContainer>
