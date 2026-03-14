@@ -113,9 +113,11 @@ def schnorr_keygen() -> tuple[bytes, bytes]:
 
 def schnorr_sign(msg32: bytes, priv: bytes) -> bytes:
     """BIP340 Schnorr sign. msg32 must be exactly 32 bytes."""
-    assert len(msg32) == 32
+    if len(msg32) != 32:
+        raise ValueError(f"schnorr_sign: msg must be 32 bytes, got {len(msg32)}")
     d0 = int.from_bytes(priv, "big")
-    assert 1 <= d0 < _N
+    if not (1 <= d0 < _N):
+        raise ValueError("schnorr_sign: private key out of range")
     P  = _point_mul(_G, d0)
     d  = d0 if P[1] % 2 == 0 else _N - d0
     P_bytes = P[0].to_bytes(32, "big")
@@ -125,7 +127,8 @@ def schnorr_sign(msg32: bytes, priv: bytes) -> bytes:
     k0    = int.from_bytes(
         _tagged_hash(b"BIP0340/nonce", t.to_bytes(32, "big") + P_bytes + msg32), "big"
     ) % _N
-    assert k0 != 0
+    if k0 == 0:
+        raise ValueError("schnorr_sign: nonce derivation produced zero (1-in-2^256 event)")
 
     R  = _point_mul(_G, k0)
     k  = k0 if R[1] % 2 == 0 else _N - k0
