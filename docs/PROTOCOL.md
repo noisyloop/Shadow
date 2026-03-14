@@ -1,0 +1,251 @@
+# Shadow Protocol Specification
+
+Version 0.1 — Draft
+
+---
+
+## 1. Overview
+
+Shadow is an end-to-end encrypted messaging protocol that uses device-generated keypairs as the sole identity primitive. It requires no phone number, no account registration, and no central identity authority.
+
+Three interlocking layers:
+
+1. **Double Ratchet** — per-session message encryption with forward secrecy and break-in recovery
+2. **X3DH** — asynchronous initial key agreement; establishes the shared secret
+3. **Sealed Sender** — hides sender identity from the relay transport layer
+
+---
+
+## 2. Cryptographic Primitives
+
+| Purpose            | Primitive       | Parameters                      | Justification                               |
+|--------------------|-----------------|----------------------------------|---------------------------------------------|
+| DH key exchange    | X25519          | RFC 7748                         | Fast, constant-time, no cofactor issues      |
+| Identity signing   | ed25519         | RFC 8032                         | Compact 64-byte sigs, fast verify            |
+| Key derivation     | HKDF-SHA256     | RFC 5869                         | Domain-separation via info field             |
+| Symmetric ratchet  | HMAC-SHA256     | Signal 0x01/0x02 constants       | Cheap, deterministic, well-analysed          |
+| Encryption         | AES-256-GCM     | NIST SP 800-38D                  | Hardware-accelerated, authenticated          |
+| Relay signatures   | BIP340 Schnorr  | secp256k1                        | Required by Nostr relay protocol             |
+
+---
+
+## 3. Double Ratchet
+
+Reference: https://signal.org/docs/specifications/doubleratchet/
+
+### 3.1 State
+
+```
+DHs    (priv[32], pub[32])  — current sending DH ratchet keypair
+DHr    pub[32] | null       — remote ratchet public key
+RK     [32]                 — root key
+CKs    [32] | null          — sending chain key
+CKr    [32] | null          — receiving chain key
+Ns     u32                  — sending message counter
+Nr     u32                  — receiving message counter
+PN     u32                  — previous chain message count
+MKSKIPPED   Map<(DHr, N), mk[32]>   — max 1000 entries
+```
+
+### 3.2 KDF_RK(rk, dh_out) → (new_rk, ck)
+
+```
+HKDF-SHA256(salt=rk, ikm=dh_out, info="ShadowRootKey", len=64)
+new_rk = output[0:32]
+ck     = output[32:64]
+```
+
+### 3.3 KDF_CK(ck) → (new_ck, mk)
+
+```
+new_ck = HMAC-SHA256(key=ck, data=0x01)
+mk     = HMAC-SHA256(key=ck, data=0x02)
+```
+
+Constants 0x01 / 0x02 follow the Signal spec for domain separation.
+
+### 3.4 AEAD
+
+```
+ENCRYPT(mk, plaintext, AD):
+  nonce  = random_bytes(12)
+  ct     = AES-256-GCM(key=mk, nonce=nonce, msg=plaintext, aad=concat_ad(AD, header))
+  return nonce || ct
+
+concat_ad(AD, header):
+  return AD || be32(len(header_bytes)) || header_bytes
+```
+
+### 3.5 Header Wire Format (40 bytes)
+
+```
+ 0- 31  DH ratchet public key (X25519 raw, 32 bytes)
+32- 35  PN — previous chain count (big-endian u32)
+36- 39  N  — message number in current chain (big-endian u32)
+```
+
+### 3.6 RatchetEncrypt
+
+```
+CKs, MK = KDF_CK(CKs)
+header  = Header(DHs.pub, PN, Ns)
+Ns     += 1
+return header, ENCRYPT(MK, plaintext, concat_ad(AD, header))
+```
+
+### 3.7 RatchetDecrypt
+
+```
+if (header.dh, header.n) in MKSKIPPED:
+    MK = MKSKIPPED.pop(...)
+    return DECRYPT(MK, ct, concat_ad(AD, header))
+
+if header.dh != DHr:
+    SkipMessageKeys(header.PN)
+    DHRatchet(header)
+
+SkipMessageKeys(header.N)
+CKr, MK = KDF_CK(CKr)
+Nr += 1
+return DECRYPT(MK, ct, concat_ad(AD, header))
+```
+
+**DHRatchet(header)**:
+```
+PN = Ns; Ns = Nr = 0; DHr = header.dh
+RK, CKr = KDF_RK(RK, DH(DHs.priv, DHr))
+DHs     = GENERATE_DH()
+RK, CKs = KDF_RK(RK, DH(DHs.priv, DHr))
+```
+
+### 3.8 Security Properties
+
+| Property             | Mechanism                                              |
+|----------------------|--------------------------------------------------------|
+| Forward secrecy      | Chain keys are hashed forward and discarded            |
+| Break-in recovery    | DH ratchet re-keys after each reply                    |
+| Message independence | Each message uses a unique AES-256-GCM key             |
+| Header integrity     | Header serialised into AEAD associated data            |
+| Out-of-order         | MKSKIPPED stores up to 1000 out-of-order message keys  |
+
+---
+
+## 4. X3DH Handshake
+
+Reference: https://signal.org/docs/specifications/x3dh/
+
+### 4.1 Key Types
+
+| Key        | Type    | Lifetime | Notes                              |
+|------------|---------|----------|------------------------------------|
+| IK (DH)    | X25519  | Device   | Long-term, used in X3DH            |
+| IK (sign)  | ed25519 | Device   | Signs SPK                          |
+| SPK        | X25519  | ~1 week  | Rotated periodically               |
+| OPK        | X25519  | 1 session| Consumed on first use              |
+| EK         | X25519  | 1 session| Generated by Alice per session     |
+
+### 4.2 KDF
+
+```
+ikm = F(0xFF*32) || DH1 || DH2 || DH3 [|| DH4]
+SK  = HKDF-SHA256(salt=0x00*32, ikm=ikm, info="ShadowX3DH", len=32)
+```
+
+### 4.3 Alice Send
+
+1. Fetch Bob's bundle; verify sig_SPK with IK_sign_B
+2. Generate EK_A
+3. DH1 = DH(IK_A_dh, SPK_B)
+4. DH2 = DH(EK_A, IK_B_dh)
+5. DH3 = DH(EK_A, SPK_B)
+6. DH4 = DH(EK_A, OPK_B)   [omit if no OPK]
+7. SK = KDF(DH1..DH4); init ratchet; encrypt initial message
+
+### 4.4 Bob Receive
+
+Same DH outputs (roles reversed); derive same SK; init ratchet; decrypt.
+
+### 4.5 Initial Message Wire Format
+
+```
+ 0- 31  IK_A DH public key
+32- 63  EK_A public key
+64- 67  SPK_id (be u32)
+68      has_opk (0x01 = yes)
+69- 72  OPK_id  (be u32; 0xFFFFFFFF if none)
+73- 76  header_len (be u32)
+77-116  header bytes (40 bytes)
+117-120 ct_len (be u32)
+121+    ciphertext
+```
+
+---
+
+## 5. Sealed Sender
+
+### 5.1 Outer Envelope
+
+```
+recipient_key_hint  — first 8 bytes of recipient IK DH pub, hex
+sealed_blob         — ECIES-encrypted inner payload (opaque to relay)
+```
+
+### 5.2 ECIES Construction
+
+```
+eph_priv, eph_pub = GENERATE_DH()
+shared   = DH(eph_priv, recipient_IK_dh_pub)
+enc_key  = HKDF-SHA256(salt=eph_pub, ikm=shared, info="ShadowSealedSender", len=32)
+nonce    = random_bytes(12)
+ct       = AES-256-GCM(key=enc_key, nonce=nonce, msg=inner, aad=None)
+sealed_blob = eph_pub(32) || nonce(12) || ct
+```
+
+### 5.3 Inner Payload
+
+```
+be32(cert_len) || SenderCertificate
+be32(hdr_len)  || ratchet_header_bytes
+be32(ct_len)   || Double Ratchet ciphertext
+```
+
+### 5.4 Sender Certificate
+
+```
+sender_ik_dh_pub   [32]   X25519 identity key
+sender_sign_pub    [32]   ed25519 signing key
+expires_at         u64    unix timestamp (big-endian)
+signature          [64]   ed25519_sign(ik_dh_pub || sign_pub || expires_at)
+```
+
+Default TTL: 24 hours. Verified by recipient on unseal.
+
+---
+
+## 6. Session Associated Data
+
+```
+AD = "shadow-session-v1" || min(IK_A, IK_B) || max(IK_A, IK_B)
+```
+
+Keys sorted lexicographically so `AD(A,B) == AD(B,A)`.
+
+---
+
+## 7. Key Rotation
+
+- **SPK**: rotate weekly. Retain old SPK for 24h grace period.
+- **OPK**: replenish when pool drops below 5. Upload 10 per batch.
+- **IK**: permanent per device. Rotation requires new device identity and out-of-band re-verification.
+
+---
+
+## 8. References
+
+- Signal Double Ratchet: https://signal.org/docs/specifications/doubleratchet/
+- Signal X3DH: https://signal.org/docs/specifications/x3dh/
+- RFC 7748 (X25519): https://tools.ietf.org/html/rfc7748
+- RFC 8032 (ed25519): https://tools.ietf.org/html/rfc8032
+- RFC 5869 (HKDF): https://tools.ietf.org/html/rfc5869
+- BIP340 (Schnorr): https://github.com/bitcoin/bips/blob/master/bip-0340.mediawiki
+- Nostr Protocol: https://github.com/nostr-protocol/nostr

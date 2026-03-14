@@ -1,0 +1,47 @@
+[package]
+name = "shadow"
+version = "0.1.0"
+edition = "2021"
+description = "End-to-end encrypted communications. No phone number. No central identity."
+authors = ["Shadow contributors"]
+license = "MIT"
+
+[[bin]]
+name = "shadow"
+path = "src/main.rs"
+
+[dependencies]
+# CLI
+clap          = { version = "4", features = ["derive"] }
+anyhow        = "1"
+
+# TUI
+ratatui       = "0.28"
+crossterm     = { version = "0.27", features = ["event-stream"] }
+
+# Async
+tokio         = { version = "1", features = ["full"] }
+futures-util  = "0.3"
+
+# Cryptography
+x25519-dalek  = { version = "2", features = ["static_secrets", "zeroize"] }
+ed25519-dalek = { version = "2", features = ["rand_core"] }
+aes-gcm       = "0.10"
+hkdf          = "0.12"
+hmac          = "0.12"
+sha2          = "0.10"
+rand_core     = { version = "0.6", features = ["getrandom"] }
+zeroize       = { version = "1", features = ["derive"] }
+
+# Transport (Nostr WebSocket)
+tokio-tungstenite = { version = "0.21", features = ["native-tls"] }
+
+# Serialization
+serde         = { version = "1", features = ["derive"] }
+serde_json    = "1"
+base64        = "0.22"
+hex           = "0.4"
+
+# Utilities
+dirs          = "5"
+chrono        = { version = "0.4", features = ["serde"] }
