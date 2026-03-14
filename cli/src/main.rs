@@ -59,6 +59,9 @@ enum Commands {
         /// Override default relay URL
         #[arg(long)]
         relay: Option<String>,
+        /// Seconds to wait for messages before exiting (default: 10)
+        #[arg(long, default_value_t = 10)]
+        timeout: u64,
     },
 
     /// Key management subcommands
@@ -97,8 +100,8 @@ async fn main() -> Result<()> {
             commands::send::run(&contact, message.as_deref(), relay.as_deref()).await?;
         }
 
-        Commands::Recv { relay } => {
-            commands::recv::run(relay.as_deref()).await?;
+        Commands::Recv { relay, timeout } => {
+            commands::recv::run(relay.as_deref(), timeout).await?;
         }
 
         Commands::Key { action } => match action {
