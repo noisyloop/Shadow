@@ -82,6 +82,18 @@ pub async fn run(relay_url: Option<&str>, timeout_secs: u64) -> Result<()> {
     let mut count = 0usize;
 
     for event in &events {
+        // Verify event ID integrity (SHA256 of canonical form).
+        // Full BIP340 Schnorr signature verification is pending secp256k1-sys
+        // integration (Phase 4.1); for now, ID verification catches relay-side
+        // content tampering.
+        if !event.verify_id() {
+            eprintln!(
+                "Dropping event with mismatched ID: {}",
+                &event.id[..8.min(event.id.len())],
+            );
+            continue;
+        }
+
         match decode_event_payload(event) {
             Ok(payload) => {
                 // Attempt to match sender Nostr pubkey to a known contact.
