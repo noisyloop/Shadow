@@ -29,8 +29,8 @@ export interface Contact {
   verified: boolean;
 }
 
-/** Parameter type for addContact — id and addedAt are derived automatically */
-export type NewContact = Omit<Contact, 'id' | 'addedAt'>;
+/** Parameter type for addContact — id, addedAt, and verified are derived automatically */
+export type NewContact = Omit<Contact, 'id' | 'addedAt' | 'verified'>;
 
 interface ContactState {
   contacts:       Contact[];
