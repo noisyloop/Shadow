@@ -1,6 +1,6 @@
 //! `shadow recv` — poll for incoming messages from a Nostr relay
 
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::Result;
 

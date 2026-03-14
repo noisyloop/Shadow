@@ -5,7 +5,7 @@ use anyhow::{anyhow, Result};
 use crate::{
     store::{Store, Message},
     transport::nostr::{
-        build_event_unsigned, decode_event_payload, RelayClient, DEFAULT_RELAY,
+        build_event_unsigned, RelayClient, DEFAULT_RELAY,
     },
     tui,
 };
