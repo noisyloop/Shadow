@@ -162,6 +162,10 @@ class ShadowRelayClient:
         relay = self._relay
 
         async def _on_event(event) -> None:
+            # Verify BIP340 Schnorr signature before processing.
+            # Without this check, a malicious relay could inject forged events.
+            if not event.verify():
+                return  # invalid signature — drop silently
             try:
                 envelope = parse_sealed_from_event(event)
             except Exception:
