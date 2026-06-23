@@ -146,8 +146,8 @@ def test_expired_sender_certificate():
 
     alice, alice_state, bob, bob_state = establish_session()
 
-    # Issue an already-expired certificate (TTL = -1)
-    expired_cert = issue_certificate(alice, ttl=-1)
+    # Issue an already-expired certificate (well outside the clock-skew window)
+    expired_cert = issue_certificate(alice, ttl=-3600)
 
     # Build the envelope manually with the expired cert
     header, ciphertext = ratchet_encrypt(alice_state, b"expired", AD)
@@ -249,6 +249,89 @@ def test_serialization_roundtrip():
 
 
 # --------------------------------------------------------------------------- #
+# Test 7 — Malformed wire formats are rejected, not crashed on
+# --------------------------------------------------------------------------- #
+
+def test_malformed_deserialization_rejected():
+    """
+    Deserializers must raise ValueError on truncated / hostile input rather than
+    silently returning malformed objects or raising struct.error.
+    """
+    from core.ratchet import Header
+    from core.x3dh import InitialMessage
+    from transport.sealed_sender import SenderCertificate
+
+    # Header — needs 40 bytes
+    for short in (b"", b"\x00" * 39):
+        try:
+            Header.deserialize(short)
+            assert False, "Header.deserialize should reject short input"
+        except ValueError:
+            pass
+
+    # InitialMessage — minimum 81 bytes
+    try:
+        InitialMessage.deserialize(b"\x00" * 10)
+        assert False, "InitialMessage.deserialize should reject short input"
+    except ValueError:
+        pass
+
+    # InitialMessage — declared hdr_len exceeds buffer
+    bogus = b"\x00" * (32 + 32 + 4 + 1 + 4) + b"\xff\xff\xff\xff" + b"\x00" * 4
+    try:
+        InitialMessage.deserialize(bogus)
+        assert False, "InitialMessage should reject oversized hdr_len"
+    except ValueError:
+        pass
+
+    # SealedEnvelope — empty / declared-blob-too-big
+    try:
+        SealedEnvelope.deserialize(b"")
+        assert False, "SealedEnvelope.deserialize should reject empty input"
+    except ValueError:
+        pass
+
+    bogus_env = b"\x00\x00\x00\x00" + b"\xff\xff\xff\xff"   # hint_len=0, blob_len=4G
+    try:
+        SealedEnvelope.deserialize(bogus_env)
+        assert False, "SealedEnvelope should reject oversized blob_len"
+    except ValueError:
+        pass
+
+    # SenderCertificate — too short for fixed header
+    try:
+        SenderCertificate.deserialize(b"\x00" * 20)
+        assert False, "SenderCertificate should reject short input"
+    except ValueError:
+        pass
+
+
+# --------------------------------------------------------------------------- #
+# Test 8 — Malformed Nostr event dicts are rejected
+# --------------------------------------------------------------------------- #
+
+def test_malformed_nostr_event_rejected():
+    """NostrEvent.from_dict must validate types and required fields."""
+    from transport.nostr import NostrEvent
+
+    for bad in (
+        {},                                                       # missing all
+        {"pubkey": "x", "created_at": 0, "kind": 14, "tags": []}, # missing content
+        {"pubkey": "x", "created_at": "0", "kind": 14,
+         "tags": [], "content": ""},                              # bad type
+        {"pubkey": "x", "created_at": 0, "kind": 14,
+         "tags": "notalist", "content": ""},                      # tags not a list
+        {"pubkey": "x", "created_at": 0, "kind": 14,
+         "tags": [["p", 1]], "content": ""},                      # tag element not string
+    ):
+        try:
+            NostrEvent.from_dict(bad)
+            assert False, f"NostrEvent.from_dict should reject {bad!r}"
+        except ValueError:
+            pass
+
+
+# --------------------------------------------------------------------------- #
 # Runner
 # --------------------------------------------------------------------------- #
 
@@ -259,6 +342,8 @@ TESTS = [
     ("Expired sender certificate rejected",          test_expired_sender_certificate),
     ("Nostr publish/receive round-trip",             test_nostr_roundtrip),
     ("Wire format serialization round-trips",        test_serialization_roundtrip),
+    ("Malformed wire formats rejected",              test_malformed_deserialization_rejected),
+    ("Malformed Nostr event rejected",               test_malformed_nostr_event_rejected),
 ]
 
 if __name__ == "__main__":

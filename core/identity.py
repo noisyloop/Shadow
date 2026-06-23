@@ -75,14 +75,20 @@ class PreKeyBundle:
     @classmethod
     def from_json(cls, s: str) -> "PreKeyBundle":
         d = json.loads(s)
+        required = ("identity_key", "identity_sign_key", "spk_id",
+                    "spk_public", "spk_signature")
+        for field_name in required:
+            if field_name not in d:
+                raise ValueError(f"PreKeyBundle JSON missing required field: {field_name}")
+        opk_public_raw = d.get("opk_public")
         return cls(
             identity_key=bytes.fromhex(d["identity_key"]),
             identity_sign_key=bytes.fromhex(d["identity_sign_key"]),
             spk_id=d["spk_id"],
             spk_public=bytes.fromhex(d["spk_public"]),
             spk_signature=bytes.fromhex(d["spk_signature"]),
-            opk_id=d["opk_id"],
-            opk_public=bytes.fromhex(d["opk_public"]) if d["opk_public"] else None,
+            opk_id=d.get("opk_id"),
+            opk_public=bytes.fromhex(opk_public_raw) if opk_public_raw else None,
         )
 
 

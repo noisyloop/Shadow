@@ -55,7 +55,7 @@ Shadow/
 ├── tests/
 │   ├── test_ratchet.py          # 8 tests — all Double Ratchet properties
 │   ├── test_x3dh.py             # 5 tests — X3DH handshake + OPK replenishment
-│   └── test_integration.py      # 6 tests — sealed sender + Nostr round-trip
+│   └── test_integration.py      # 8 tests — sealed sender + Nostr + wire-format hardening
 ├── cli/                         # Rust CLI/TUI (Phase 4)
 │   ├── Cargo.toml
 │   └── src/
@@ -129,7 +129,7 @@ Shadow/
 ---
 
 ### Phase 3 — Sealed Sender ✅
-**Complete. 6/6 integration tests passing.**
+**Complete. 8/8 integration tests passing.**
 
 - [x] ECIES envelope — ephemeral X25519 + HKDF-SHA256 + AES-256-GCM
 - [x] `eph_pub` bound as AEAD associated data (tampering detected)
@@ -204,7 +204,7 @@ pip install cryptography pytest websockets
 python -m pytest tests/ -v
 ```
 
-Expected: `19 passed`
+Expected: `21 passed`
 
 ### Rust CLI
 
@@ -236,6 +236,11 @@ Shadow has been reviewed for the following issues (fixed):
 | `InitialMessage.deserialize` no bounds checks | High | ✓ Explicit checks added |
 | `schnorr_sign` used `assert` (disabled by `-O`) | High | ✓ Replaced with `ValueError` |
 | `_ecies_decrypt` no minimum-length check | High | ✓ Rejects blobs < 60 bytes |
+| `SealedEnvelope.deserialize` no bounds checks | High | ✓ Explicit checks added |
+| `SenderCertificate.deserialize` no bounds checks | Medium | ✓ Explicit checks added |
+| `Header.deserialize` no length check | Medium | ✓ Rejects < 40-byte input |
+| `NostrEvent.from_dict` no schema validation | Medium | ✓ Type and presence checks |
+| Sender cert verification too strict on clock skew | Low | ✓ 60s tolerance window |
 
 Known weaknesses in the current phase are documented in [`docs/THREAT_MODEL.md`](docs/THREAT_MODEL.md). To report a vulnerability privately, see [`CONTRIBUTING.md`](CONTRIBUTING.md#9-security-vulnerability-disclosure).
 

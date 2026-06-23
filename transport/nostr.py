@@ -218,15 +218,35 @@ class NostrEvent:
 
     @classmethod
     def from_dict(cls, d: dict) -> "NostrEvent":
+        if not isinstance(d, dict):
+            raise ValueError("NostrEvent.from_dict expects a mapping")
+        try:
+            pubkey     = d["pubkey"]
+            created_at = d["created_at"]
+            kind       = d["kind"]
+            tags       = d["tags"]
+            content    = d["content"]
+        except KeyError as missing:
+            raise ValueError(f"NostrEvent missing field: {missing}") from None
+        if not isinstance(pubkey, str) or not isinstance(content, str):
+            raise ValueError("NostrEvent pubkey/content must be strings")
+        if not isinstance(created_at, int) or not isinstance(kind, int):
+            raise ValueError("NostrEvent created_at/kind must be ints")
+        if not isinstance(tags, list) or not all(
+            isinstance(t, list) and all(isinstance(x, str) for x in t) for t in tags
+        ):
+            raise ValueError("NostrEvent tags must be list of lists of strings")
         e = cls(
-            pubkey=d["pubkey"],
-            created_at=d["created_at"],
-            kind=d["kind"],
-            tags=d["tags"],
-            content=d["content"],
+            pubkey=pubkey,
+            created_at=created_at,
+            kind=kind,
+            tags=tags,
+            content=content,
         )
-        e.id  = d.get("id", "")
-        e.sig = d.get("sig", "")
+        e.id  = d.get("id", "") or ""
+        e.sig = d.get("sig", "") or ""
+        if not isinstance(e.id, str) or not isinstance(e.sig, str):
+            raise ValueError("NostrEvent id/sig must be strings")
         return e
 
 
@@ -364,7 +384,7 @@ class NostrRelay:
                         pass  # relay notice — could log
                     elif msg_type == "OK":
                         pass  # publish acknowledgement
-                except (json.JSONDecodeError, KeyError):
+                except (json.JSONDecodeError, KeyError, ValueError):
                     continue
         except ConnectionClosed:
             pass

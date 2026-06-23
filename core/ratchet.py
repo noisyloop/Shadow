@@ -122,6 +122,8 @@ class Header:
 
     @classmethod
     def deserialize(cls, data: bytes) -> "Header":
+        if len(data) < 40:
+            raise ValueError(f"Header too short: {len(data)} bytes (need 40)")
         dh = data[:32]
         pn, n = struct.unpack(">II", data[32:40])
         return cls(dh=dh, pn=pn, n=n)

@@ -67,6 +67,11 @@ from transport.nostr import (
 CERT_TTL_SECONDS   = 24 * 3600   # sender certificates valid for 24 hours
 SEALED_SENDER_INFO = b"ShadowSealedSender"
 
+# Allow small clock skew between sender/receiver when validating certificate
+# expiry. Without this, normal NTP drift between devices can cause spurious
+# rejection of just-issued certificates.
+CERT_CLOCK_SKEW_SECONDS = 60
+
 
 # --------------------------------------------------------------------------- #
 # ECIES helpers
@@ -147,10 +152,21 @@ class SenderCertificate:
 
     @classmethod
     def deserialize(cls, data: bytes) -> "SenderCertificate":
+        # Fixed layout: ik_dh_pub(32) || sign_pub(32) || expires_at(8) || sig_len(4) || signature
+        _HEADER_LEN = 32 + 32 + 8 + 4
+        if len(data) < _HEADER_LEN:
+            raise ValueError(
+                f"SenderCertificate too short: {len(data)} bytes (need >={_HEADER_LEN})"
+            )
         ik_dh_pub  = data[:32]
         sign_pub   = data[32:64]
         expires_at = struct.unpack(">Q", data[64:72])[0]
         sig_len    = struct.unpack(">I", data[72:76])[0]
+        if sig_len > len(data) - _HEADER_LEN:
+            raise ValueError(
+                f"SenderCertificate sig_len {sig_len} exceeds remaining "
+                f"buffer {len(data) - _HEADER_LEN}"
+            )
         signature  = data[76:76+sig_len]
         return cls(
             sender_ik_dh_pub=ik_dh_pub,
@@ -164,7 +180,7 @@ class SenderCertificate:
         Verify the certificate's self-signature.
         Raises InvalidSignature or ValueError on failure.
         """
-        if int(time.time()) > self.expires_at:
+        if int(time.time()) - CERT_CLOCK_SKEW_SECONDS > self.expires_at:
             raise ValueError("Sender certificate has expired")
         body = (
             self.sender_ik_dh_pub
@@ -263,10 +279,25 @@ class SealedEnvelope:
 
     @classmethod
     def deserialize(cls, data: bytes) -> "SealedEnvelope":
+        # Minimum: hint_len(4) + hint(>=0) + blob_len(4) + blob(>=0)
+        if len(data) < 8:
+            raise ValueError(f"SealedEnvelope too short: {len(data)} bytes (need >=8)")
         offset  = 0
         hint_len = struct.unpack(">I", data[offset:offset+4])[0]; offset += 4
+        if hint_len > len(data) - offset:
+            raise ValueError(
+                f"SealedEnvelope hint_len {hint_len} exceeds remaining "
+                f"buffer {len(data) - offset}"
+            )
         hint     = data[offset:offset+hint_len].hex();             offset += hint_len
+        if offset + 4 > len(data):
+            raise ValueError("Truncated SealedEnvelope: missing blob_len")
         blob_len = struct.unpack(">I", data[offset:offset+4])[0]; offset += 4
+        if blob_len > len(data) - offset:
+            raise ValueError(
+                f"SealedEnvelope blob_len {blob_len} exceeds remaining "
+                f"buffer {len(data) - offset}"
+            )
         blob     = data[offset:offset+blob_len]
         return cls(recipient_key_hint=hint, sealed_blob=blob)
 
